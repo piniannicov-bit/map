@@ -601,6 +601,26 @@ def radar_track(icao24):
                 "Ошибка получения траектории."
         }), 500
 
+@app.route("/api/radar/test")
+def radar_test():
+    try:
+        response = requests.get(
+            "https://opensky-network.org/api/states/all",
+            timeout=(10, 20)
+        )
+
+        return jsonify({
+            "ok": True,
+            "status": response.status_code,
+            "text": response.text[:500]
+        })
+
+    except Exception as e:
+        return jsonify({
+            "ok": False,
+            "error": str(e)
+        }), 500
+
 # ---------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------
