@@ -8,7 +8,7 @@ from flask import Flask, request, jsonify, session, send_from_directory
 from pymongo import MongoClient
 from werkzeug.security import generate_password_hash, check_password_hash
 from bson import ObjectId
-
+import threading
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -55,6 +55,557 @@ if MONGODB_URI:
 else:
     print("WARNING: MONGODB_URI is not configured.")
 
+# ============================================================
+# OPENSKY
+# ============================================================
+
+OPENSKY_API_URL = "https://opensky-network.org/api"
+OPENSKY_TOKEN_URL = (
+    "https://auth.opensky-network.org/auth/realms/"
+    "opensky-network/protocol/openid-connect/token"
+)
+
+OPENSKY_CLIENT_ID = os.getenv(
+    "OPENSKY_CLIENT_ID"
+)
+
+OPENSKY_CLIENT_SECRET = os.getenv(
+    "OPENSKY_CLIENT_SECRET"
+)
+
+
+_opensky_token = None
+_opensky_token_expires_at = 0
+_opensky_token_lock = threading.Lock()
+
+
+def get_opensky_token():
+    global _opensky_token
+    global _opensky_token_expires_at
+
+    # Anonymous mode if credentials are not configured.
+    if not OPENSKY_CLIENT_ID or not OPENSKY_CLIENT_SECRET:
+        return None
+
+    now = time.time()
+
+    if (
+        _opensky_token
+        and now < _opensky_token_expires_at
+    ):
+        return _opensky_token
+
+    with _opensky_token_lock:
+
+        now = time.time()
+
+        if (
+            _opensky_token
+            and now < _opensky_token_expires_at
+        ):
+            return _opensky_token
+
+        response = requests.post(
+            OPENSKY_TOKEN_URL,
+            data={
+                "grant_type": "client_credentials",
+                "client_id": OPENSKY_CLIENT_ID,
+                "client_secret": OPENSKY_CLIENT_SECRET
+            },
+            timeout=15
+        )
+
+        response.raise_for_status()
+
+        data = response.json()
+
+        _opensky_token = data["access_token"]
+
+        expires_in = int(
+            data.get(
+                "expires_in",
+                1800
+            )
+        )
+
+        # Refresh a little before expiration.
+        _opensky_token_expires_at = (
+            time.time()
+            + max(
+                60,
+                expires_in - 60
+            )
+        )
+
+        return _opensky_token
+
+
+def opensky_headers():
+    token = get_opensky_token()
+
+    if token:
+        return {
+            "Authorization": f"Bearer {token}"
+        }
+
+    return {}
+
+def get_opensky_states(
+    lamin,
+    lomin,
+    lamax,
+    lomax
+):
+
+    params = {
+        "lamin": lamin,
+        "lomin": lomin,
+        "lamax": lamax,
+        "lomax": lomax,
+        "extended": 1
+    }
+
+    response = requests.get(
+        f"{OPENSKY_API_URL}/states/all",
+        params=params,
+        headers=opensky_headers(),
+        timeout=20
+    )
+
+    # If OAuth token expired, refresh once.
+    if response.status_code == 401:
+
+        global _opensky_token
+        global _opensky_token_expires_at
+
+        _opensky_token = None
+        _opensky_token_expires_at = 0
+
+        response = requests.get(
+            f"{OPENSKY_API_URL}/states/all",
+            params=params,
+            headers=opensky_headers(),
+            timeout=20
+        )
+
+    response.raise_for_status()
+
+    return response.json()
+
+@app.route("/radar")
+def radar_page():
+    return send_from_directory(
+        app.root_path,
+        "radar.html"
+    )
+
+@app.route("/radar.js")
+def radar_js():
+    return send_from_directory(
+        app.root_path,
+        "radar.js"
+    )
+
+@app.route("/api/radar/states")
+def radar_states():
+
+    try:
+
+        lamin = float(
+            request.args.get(
+                "lamin"
+            )
+        )
+
+        lomin = float(
+            request.args.get(
+                "lomin"
+            )
+        )
+
+        lamax = float(
+            request.args.get(
+                "lamax"
+            )
+        )
+
+        lomax = float(
+            request.args.get(
+                "lomax"
+            )
+        )
+
+    except (
+        TypeError,
+        ValueError
+    ):
+
+        return jsonify({
+            "error": "Некорректные координаты карты."
+        }), 400
+
+
+    # Basic protection against accidentally
+    # requesting the entire globe.
+    if lamin < -90 or lamin > 90:
+        return jsonify({
+            "error": "lamin должен быть от -90 до 90."
+        }), 400
+
+    if lamax < -90 or lamax > 90:
+        return jsonify({
+            "error": "lamax должен быть от -90 до 90."
+        }), 400
+
+    if lomin < -180 or lomin > 180:
+        return jsonify({
+            "error": "lomin должен быть от -180 до 180."
+        }), 400
+
+    if lomax < -180 or lomax > 180:
+        return jsonify({
+            "error": "lomax должен быть от -180 до 180."
+        }), 400
+
+
+    # Do not allow huge requests.
+    area = abs(
+        lamax - lamin
+    ) * abs(
+        lomax - lomin
+    )
+
+
+    if area > 1600:
+
+        return jsonify({
+            "error": (
+                "Область карты слишком большая. "
+                "Приблизьте карту."
+            )
+        }), 400
+
+
+    try:
+
+        data = get_opensky_states(
+            lamin,
+            lomin,
+            lamax,
+            lomax
+        )
+
+
+        states = data.get("states") or []
+
+
+        aircraft = []
+
+
+        for state in states:
+
+            if len(state) < 18:
+                continue
+
+
+            latitude = state[6]
+            longitude = state[5]
+
+
+            if (
+                latitude is None
+                or longitude is None
+            ):
+                continue
+
+
+            aircraft.append({
+
+                "icao24": state[0],
+
+                "callsign": (
+                    state[1].strip()
+                    if state[1]
+                    else None
+                ),
+
+                "origin_country":
+                    state[2],
+
+                "time_position":
+                    state[3],
+
+                "last_contact":
+                    state[4],
+
+                "longitude":
+                    longitude,
+
+                "latitude":
+                    latitude,
+
+                "altitude":
+                    state[7],
+
+                "on_ground":
+                    state[8],
+
+                "velocity":
+                    state[9],
+
+                "true_track":
+                    state[10],
+
+                "vertical_rate":
+                    state[11],
+
+                "geo_altitude":
+                    state[13],
+
+                "squawk":
+                    state[14],
+
+                "position_source":
+                    state[16],
+
+                "category":
+                    state[17]
+            })
+
+
+        return jsonify({
+
+            "time":
+                data.get("time"),
+
+            "aircraft":
+                aircraft,
+
+            "count":
+                len(aircraft)
+
+        })
+
+
+    except requests.HTTPError as error:
+
+        response = getattr(
+            error,
+            "response",
+            None
+        )
+
+
+        if response is not None:
+
+            if response.status_code == 429:
+
+                return jsonify({
+                    "error": (
+                        "OpenSky временно "
+                        "ограничил количество запросов. "
+                        "Попробуйте через несколько секунд."
+                    )
+                }), 429
+
+
+            if response.status_code == 401:
+
+                return jsonify({
+                    "error": (
+                        "Ошибка авторизации OpenSky."
+                    )
+                }), 502
+
+
+        print(
+            "OpenSky HTTP error:",
+            error
+        )
+
+
+        return jsonify({
+            "error":
+                "OpenSky не вернул данные."
+        }), 502
+
+
+    except Exception as error:
+
+        print(
+            "Radar states error:",
+            error
+        )
+
+
+        return jsonify({
+            "error":
+                "Ошибка получения данных радара."
+        }), 500
+
+@app.route("/api/radar/track/<icao24>")
+def radar_track(icao24):
+
+    icao24 = (
+        icao24
+        .strip()
+        .lower()
+    )
+
+
+    # ICAO24 is a 6-character hexadecimal address.
+    if (
+        len(icao24) != 6
+        or any(
+            c not in "0123456789abcdef"
+            for c in icao24
+        )
+    ):
+
+        return jsonify({
+            "error":
+                "Некорректный ICAO24."
+        }), 400
+
+
+    try:
+
+        params = {
+            "icao24": icao24,
+            "time": 0
+        }
+
+
+        response = requests.get(
+            f"{OPENSKY_API_URL}/tracks/all",
+            params=params,
+            headers=opensky_headers(),
+            timeout=20
+        )
+
+
+        if response.status_code == 401:
+
+            global _opensky_token
+            global _opensky_token_expires_at
+
+            _opensky_token = None
+            _opensky_token_expires_at = 0
+
+
+            response = requests.get(
+                f"{OPENSKY_API_URL}/tracks/all",
+                params=params,
+                headers=opensky_headers(),
+                timeout=20
+            )
+
+
+        if response.status_code == 404:
+
+            return jsonify({
+                "error":
+                    "Текущая траектория "
+                    "для этого самолёта недоступна."
+            }), 404
+
+
+        response.raise_for_status()
+
+
+        data = response.json()
+
+
+        path = []
+
+
+        for point in (
+            data.get("path") or []
+        ):
+
+            if len(point) < 6:
+                continue
+
+
+            path.append({
+
+                "time":
+                    point[0],
+
+                "latitude":
+                    point[1],
+
+                "longitude":
+                    point[2],
+
+                "altitude":
+                    point[3],
+
+                "true_track":
+                    point[4],
+
+                "on_ground":
+                    point[5]
+            })
+
+
+        return jsonify({
+
+            "icao24":
+                data.get(
+                    "icao24",
+                    icao24
+                ),
+
+            "callsign":
+                data.get(
+                    "calllsign"
+                ) or data.get(
+                    "callsign"
+                ),
+
+            "startTime":
+                data.get(
+                    "startTime"
+                ),
+
+            "endTime":
+                data.get(
+                    "endTime"
+                ),
+
+            "path":
+                path
+
+        })
+
+
+    except requests.HTTPError as error:
+
+        print(
+            "OpenSky track HTTP error:",
+            error
+        )
+
+
+        return jsonify({
+            "error":
+                "OpenSky не смог предоставить траекторию."
+        }), 502
+
+
+    except Exception as error:
+
+        print(
+            "Radar track error:",
+            error
+        )
+
+
+        return jsonify({
+            "error":
+                "Ошибка получения траектории."
+        }), 500
 
 # ---------------------------------------------------------
 # Helpers
