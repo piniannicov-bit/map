@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>World Tracker — Radar</title>
+
+    <link
+        rel="stylesheet"
+        href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    >
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        html,
+        body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            font-family: Arial, Helvetica, sans-serif;
+            background: #07111f;
+            color: white;
+        }
+
+        #map {
+            position: absolute;
+            inset: 0;
+            z-index: 1;
+        }
+
+        .topbar {
+            position: absolute;
+            top: 14px;
+            left: 14px;
+            right: 14px;
+            height: 58px;
+
+            display: flex;
+            align-items: center;
+            gap: 14px;
+
+            padding: 0 16px;
+
+            background: rgba(7, 17, 31, 0.92);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 16px;
+
+            backdrop-filter: blur(14px);
+
+            z-index: 1000;
+            box-shadow: 0 10px 35px rgba(0,0,0,0.3);
+        }
+
+        .brand {
+            font-size: 19px;
+            font-weight: 800;
+            white-space: nowrap;
+        }
+
+        .brand span {
+            color: #55a8ff;
+        }
+
+        .status {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+
+            font-size: 13px;
+            color: #b9c8da;
+        }
+
+        .status-dot {
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+            background: #37d67a;
+            box-shadow: 0 0 10px #37d67a;
+        }
+
+        .top-buttons {
+            margin-left: auto;
+            display: flex;
+            gap: 8px;
+        }
+
+        button {
+            border: 0;
+            color: white;
+            background: #16283f;
+            padding: 10px 13px;
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: 0.15s;
+        }
+
+        button:hover {
+            background: #203b5d;
+        }
+
+        .primary {
+            background: #1677ff;
+        }
+
+        .primary:hover {
+            background: #2583ff;
+        }
+
+        .panel {
+            position: absolute;
+            top: 86px;
+            right: 14px;
+            width: 330px;
+            max-height: calc(100vh - 100px);
+
+            overflow-y: auto;
+
+            padding: 16px;
+
+            background: rgba(7, 17, 31, 0.94);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 16px;
+
+            backdrop-filter: blur(14px);
+
+            z-index: 1000;
+
+            box-shadow: 0 15px 45px rgba(0,0,0,0.35);
+        }
+
+        .panel-title {
+            font-size: 16px;
+            font-weight: 800;
+            margin-bottom: 4px;
+        }
+
+        .panel-subtitle {
+            color: #8fa3ba;
+            font-size: 12px;
+            margin-bottom: 15px;
+        }
+
+        .aircraft-name {
+            font-size: 25px;
+            font-weight: 900;
+            margin-bottom: 3px;
+        }
+
+        .callsign {
+            color: #55a8ff;
+            font-weight: 700;
+            margin-bottom: 15px;
+        }
+
+        .info-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+
+        .info {
+            padding: 10px;
+            border-radius: 10px;
+            background: rgba(255,255,255,0.05);
+        }
+
+        .info-label {
+            font-size: 10px;
+            color: #8094ab;
+            text-transform: uppercase;
+            margin-bottom: 4px;
+        }
+
+        .info-value {
+            font-size: 14px;
+            font-weight: 700;
+        }
+
+        .wide {
+            grid-column: span 2;
+        }
+
+        .track-button {
+            width: 100%;
+            margin-top: 12px;
+        }
+
+        .legend {
+            position: absolute;
+            bottom: 18px;
+            left: 18px;
+
+            padding: 11px 14px;
+
+            background: rgba(7,17,31,0.9);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 12px;
+
+            z-index: 1000;
+
+            font-size: 12px;
+            color: #b7c7d9;
+        }
+
+        .leaflet-control-zoom {
+            margin-top: 82px !important;
+        }
+
+        .aircraft-marker {
+            width: 32px;
+            height: 32px;
+
+            display: flex;
+            align-items: center;
+            justify-content: center;
+
+            transform-origin: center;
+        }
+
+        .aircraft-icon {
+            width: 30px;
+            height: 30px;
+
+            display: flex;
+            align-items: center;
+            justify-content: center;
+
+            color: #55a8ff;
+
+            font-size: 23px;
+
+            filter:
+                drop-shadow(0 0 4px rgba(0,0,0,0.8))
+                drop-shadow(0 0 5px rgba(85,168,255,0.5));
+        }
+
+        .aircraft-marker.selected .aircraft-icon {
+            color: #ffcc33;
+            filter:
+                drop-shadow(0 0 5px rgba(0,0,0,0.9))
+                drop-shadow(0 0 10px rgba(255,204,51,0.9));
+        }
+
+        .leaflet-popup-content-wrapper,
+        .leaflet-popup-tip {
+            background: #0b192b;
+            color: white;
+        }
+
+        .leaflet-popup-content {
+            margin: 12px;
+        }
+
+        .popup-title {
+            font-weight: 800;
+            font-size: 15px;
+            margin-bottom: 5px;
+        }
+
+        .popup-line {
+            font-size: 12px;
+            color: #b9c8da;
+            margin-top: 3px;
+        }
+
+        .loading {
+            color: #7f95ad;
+            font-size: 13px;
+            padding: 12px 0;
+        }
+
+        .error {
+            color: #ff7d7d;
+            font-size: 13px;
+            padding: 10px 0;
+        }
+
+        @media (max-width: 700px) {
+            .topbar {
+                left: 8px;
+                right: 8px;
+                top: 8px;
+                height: 52px;
+                padding: 0 10px;
+            }
+
+            .brand {
+                font-size: 15px;
+            }
+
+            .status {
+                display: none;
+            }
+
+            .top-buttons button {
+                padding: 8px 9px;
+            }
+
+            .panel {
+                left: 8px;
+                right: 8px;
+                top: auto;
+                bottom: 8px;
+                width: auto;
+                max-height: 42vh;
+            }
+
+            .legend {
+                display: none;
+            }
+
+            .leaflet-control-zoom {
+                margin-top: 70px !important;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+<div id="map"></div>
+
+<div class="topbar">
+    <div class="brand">
+        🌍 <span>World Tracker</span> · Radar
+    </div>
+
+    <div class="status">
+        <div class="status-dot"></div>
+        <span id="connectionStatus">Подключение...</span>
+    </div>
+
+    <div class="top-buttons">
+        <button onclick="window.location.href='/'">
+            Карта
+        </button>
+
+        <button onclick="centerOnMe()">
+            📍 Я
+        </button>
+
+        <button onclick="refreshAircraft()" class="primary">
+            ↻ Обновить
+        </button>
+    </div>
+</div>
+
+<div class="panel">
+
+    <div class="panel-title">
+        ✈️ Воздушное движение
+    </div>
+
+    <div class="panel-subtitle" id="aircraftCount">
+        Загрузка...
+    </div>
+
+    <div id="aircraftInfo">
+        <div class="loading">
+            Нажмите на самолёт на карте, чтобы увидеть информацию.
+        </div>
+    </div>
+
+</div>
+
+<div class="legend">
+    ✈ Самолёты · Клик по самолёту — информация и траектория
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="/radar.js"></script>
+
+</body>
+</html>
