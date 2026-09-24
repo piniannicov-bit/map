@@ -142,13 +142,6 @@ def get_opensky_token():
 
 
 def opensky_headers():
-    token = get_opensky_token()
-
-    if token:
-        return {
-            "Authorization": f"Bearer {token}"
-        }
-
     return {}
 
 def get_opensky_states(
