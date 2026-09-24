@@ -113,7 +113,7 @@ def get_opensky_token():
                 "client_id": OPENSKY_CLIENT_ID,
                 "client_secret": OPENSKY_CLIENT_SECRET
             },
-            timeout=15
+            timeout=(10, 60)
         )
 
         response.raise_for_status()
@@ -170,7 +170,7 @@ def get_opensky_states(
         f"{OPENSKY_API_URL}/states/all",
         params=params,
         headers=opensky_headers(),
-        timeout=20
+        timeout=(10, 60)
     )
 
     # If OAuth token expired, refresh once.
@@ -186,7 +186,7 @@ def get_opensky_states(
             f"{OPENSKY_API_URL}/states/all",
             params=params,
             headers=opensky_headers(),
-            timeout=20
+            timeout=(10, 60)
         )
 
     response.raise_for_status()
