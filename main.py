@@ -7,6 +7,7 @@ import requests
 from flask import Flask, request, jsonify, session, send_from_directory
 from pymongo import MongoClient
 from werkzeug.security import generate_password_hash, check_password_hash
+from bson import ObjectId
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -658,7 +659,346 @@ def get_route(route_id):
 
     return jsonify(route)
 
+# ============================================================
+# GAME
+# ============================================================
 
+@app.route("/game")
+def game_page():
+    return send_from_directory(".", "game.html")
+
+
+@app.route("/game.js")
+def game_js():
+    return send_from_directory(".", "game.js")
+
+
+@app.route("/api/game/races", methods=["POST"])
+def save_game_race():
+
+    if "user_id" not in session:
+        return jsonify({
+            "error": "Authentication required"
+        }), 401
+
+    if db is None:
+        return jsonify({
+            "error": "MongoDB is not connected"
+        }), 503
+
+    data = request.get_json(silent=True) or {}
+
+    try:
+
+        race = {
+            "user_id": ObjectId(session["user_id"]),
+
+            "created_at": datetime.utcnow(),
+
+            "car_color":
+                data.get(
+                    "car_color",
+                    "#1683ff"
+                ),
+
+            "position":
+                int(
+                    data.get(
+                        "position",
+                        1
+                    )
+                ),
+
+            "total_players":
+                int(
+                    data.get(
+                        "total_players",
+                        5
+                    )
+                ),
+
+            "time_ms":
+                int(
+                    data.get(
+                        "time_ms",
+                        0
+                    )
+                ),
+
+            "max_speed":
+                float(
+                    data.get(
+                        "max_speed",
+                        0
+                    )
+                ),
+
+            "distance":
+                float(
+                    data.get(
+                        "distance",
+                        0
+                    )
+                ),
+
+            "laps":
+                int(
+                    data.get(
+                        "laps",
+                        3
+                    )
+                ),
+
+            "replay":
+                data.get(
+                    "replay",
+                    []
+                )
+        }
+
+
+        result = db.game_races.insert_one(
+            race
+        )
+
+
+        return jsonify({
+            "success": True,
+            "race_id": str(
+                result.inserted_id
+            )
+        })
+
+    except Exception as e:
+
+        print(
+            "Game race save error:",
+            e
+        )
+
+        return jsonify({
+            "error": "Could not save race"
+        }), 500
+
+
+@app.route("/api/game/races", methods=["GET"])
+def get_game_races():
+
+    if "user_id" not in session:
+        return jsonify({
+            "error": "Authentication required"
+        }), 401
+
+    if db is None:
+        return jsonify({
+            "error": "MongoDB is not connected"
+        }), 503
+
+    try:
+
+        races = list(
+            db.game_races
+            .find({
+                "user_id":
+                    ObjectId(
+                        session["user_id"]
+                    )
+            })
+            .sort(
+                "created_at",
+                -1
+            )
+            .limit(50)
+        )
+
+
+        result = []
+
+        for race in races:
+
+            result.append({
+
+                "id":
+                    str(
+                        race["_id"]
+                    ),
+
+                "created_at":
+                    race.get(
+                        "created_at"
+                    ).isoformat()
+                    if race.get(
+                        "created_at"
+                    )
+                    else None,
+
+                "car_color":
+                    race.get(
+                        "car_color"
+                    ),
+
+                "position":
+                    race.get(
+                        "position",
+                        1
+                    ),
+
+                "total_players":
+                    race.get(
+                        "total_players",
+                        5
+                    ),
+
+                "time_ms":
+                    race.get(
+                        "time_ms",
+                        0
+                    ),
+
+                "max_speed":
+                    race.get(
+                        "max_speed",
+                        0
+                    ),
+
+                "distance":
+                    race.get(
+                        "distance",
+                        0
+                    ),
+
+                "laps":
+                    race.get(
+                        "laps",
+                        3
+                    )
+            })
+
+
+        return jsonify(result)
+
+    except Exception as e:
+
+        print(
+            "Game race history error:",
+            e
+        )
+
+        return jsonify({
+            "error": "Could not load races"
+        }), 500
+
+
+@app.route(
+    "/api/game/races/<race_id>",
+    methods=["GET"]
+)
+def get_game_race(race_id):
+
+    if "user_id" not in session:
+        return jsonify({
+            "error": "Authentication required"
+        }), 401
+
+    if db is None:
+        return jsonify({
+            "error": "MongoDB is not connected"
+        }), 503
+
+    try:
+
+        race = db.game_races.find_one({
+            "_id":
+                ObjectId(race_id),
+
+            "user_id":
+                ObjectId(
+                    session["user_id"]
+                )
+        })
+
+
+        if not race:
+
+            return jsonify({
+                "error": "Race not found"
+            }), 404
+
+
+        return jsonify({
+
+            "id":
+                str(
+                    race["_id"]
+                ),
+
+            "created_at":
+                race.get(
+                    "created_at"
+                ).isoformat()
+                if race.get(
+                    "created_at"
+                )
+                else None,
+
+            "car_color":
+                race.get(
+                    "car_color"
+                ),
+
+            "position":
+                race.get(
+                    "position",
+                    1
+                ),
+
+            "total_players":
+                race.get(
+                    "total_players",
+                    5
+                ),
+
+            "time_ms":
+                race.get(
+                    "time_ms",
+                    0
+                ),
+
+            "max_speed":
+                race.get(
+                    "max_speed",
+                    0
+                ),
+
+            "distance":
+                race.get(
+                    "distance",
+                    0
+                ),
+
+            "laps":
+                race.get(
+                    "laps",
+                    3
+                ),
+
+            "replay":
+                race.get(
+                    "replay",
+                    []
+                )
+        })
+
+    except Exception as e:
+
+        print(
+            "Game race error:",
+            e
+        )
+
+        return jsonify({
+            "error": "Could not load race"
+        }), 500
 # ---------------------------------------------------------
 # Health check
 # ---------------------------------------------------------
