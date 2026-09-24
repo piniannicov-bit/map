@@ -1,3 +1,6 @@
+import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+
 let scene;
 let camera;
 let renderer;
@@ -44,7 +47,6 @@ let playerData = null;
 
 let replayData = [];
 let lastReplayRecord = 0;
-
 
 /* =========================================================
    AUTH
